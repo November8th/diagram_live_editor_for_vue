@@ -415,6 +415,23 @@ Vue.component('mermaid-preview', {
         this._positions = {};
         this._elements = {};
         this._edgePaths = [];
+
+        // display:none 컨테이너에서 렌더되면 participant getBBox()가 0을 반환해
+        // 히트존이 (0,0)에 부착된다. flowchart와 동일하게 visible 전환 시 재렌더.
+        var sampleActor = svgEl.querySelector('.actor, .actor-top, g[class*="actor"]');
+        if (sampleActor && sampleActor.getBBox) {
+          try {
+            var sampleBox = sampleActor.getBBox();
+            if (!sampleBox.width && !sampleBox.height) {
+              this._scheduleRerenderWhenVisible();
+              return;
+            }
+          } catch (e) {
+            this._scheduleRerenderWhenVisible();
+            return;
+          }
+        }
+
         var sequenceCtx = this._buildCtx(svgEl);
         SequenceSvgHandler.attach(svgEl, this.model, sequenceCtx);
         SequenceBlockHandler.initOverlay(svgEl);
