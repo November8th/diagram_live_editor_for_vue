@@ -93,6 +93,7 @@
       zone.addEventListener('mouseenter', function () {
         if (self._dragging) return;
         if (svgEl.dataset && svgEl.dataset.noteHoverActive) return;
+        if (svgEl.dataset && svgEl.dataset.blockBtnActive) return;
         self.clearHandles();
         for (var i = 0; i < slots.length; i++) {
           self._addHandle(svgEl, participant, slots[i], participantMap, ctx);
@@ -161,7 +162,7 @@
             didDrag = true;
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            self._startDrag(svgEl, participant.id, x, y, slot.insertIndex, participantMap, ctx);
+            self._startDrag(svgEl, participant.id, x, y, slot, participantMap, ctx);
           }
         };
 
@@ -179,6 +180,7 @@
                 type: 'insert',
                 participantId: participant.id,
                 insertIndex: slot.insertIndex,
+                stmtInsertAt: slot.stmtInsertAt,
                 x: screen ? screen.x : e.clientX,
                 y: screen ? screen.y : e.clientY
               }
@@ -199,7 +201,9 @@
       this._handles.push(hit, circle, plus);
     },
 
-    _startDrag: function (svgEl, fromId, startX, startY, insertIndex, participantMap, ctx) {
+    _startDrag: function (svgEl, fromId, startX, startY, slot, participantMap, ctx) {
+      var insertIndex = slot && slot.insertIndex !== undefined ? slot.insertIndex : slot;
+      var stmtInsertAt = slot && slot.stmtInsertAt !== undefined ? slot.stmtInsertAt : undefined;
       var self = this;
       this._bringOverlayToFront(svgEl);
       this._dragging = true;
@@ -308,12 +312,9 @@
         var svgPt = SvgPositionTracker.getSVGPoint(svgEl, me.clientX, me.clientY);
         var target = self._findTarget(svgPt.x, svgPt.y, fromId, startY, participantMap);
         if (target) {
-          ctx.emit('add-sequence-message', {
-            fromId: fromId,
-            toId: target,
-            text: 'new msg',
-            insertIndex: insertIndex
-          });
+          var payload = { fromId: fromId, toId: target, text: 'new msg', insertIndex: insertIndex };
+          if (stmtInsertAt !== undefined) payload.stmtInsertAt = stmtInsertAt;
+          ctx.emit('add-sequence-message', payload);
         }
       };
 

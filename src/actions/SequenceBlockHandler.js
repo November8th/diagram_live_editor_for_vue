@@ -259,6 +259,7 @@
           for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
           shared.btns = null;
         }
+        if (svgEl.dataset) delete svgEl.dataset.blockBtnActive;
       }
       function sharedScheduleHide() {
         sharedCancelHide();
@@ -288,15 +289,41 @@
         return a.block.statementIndex - b.block.statementIndex;
       });
 
+      // 분기 클릭 라우팅용 데이터 수집 (3단계 전략)
+      var allBranchClickRanges = []; // 전략1: Y 범위 (getBBox 성공 시)
+      var branchElRefs = [];          // 전략2: element identity (elementsFromPoint)
+      var allBranchItems = [];        // 전략3: 항상 채워지는 모델 기반 목록
+
       for (var j = 0; j < sortedBindings.length; j++) {
         var binding = sortedBindings[j];
         var boundBlock = binding.block;
         var branchTitleEls = [];
         var branchStatements = [];
         for (var b = 0; b < boundBlock.branchIndices.length; b++) {
-          branchTitleEls.push(this._findNextUnusedLoopText(allLoopTextEls, usedLoopIndices));
+          var btelEl = this._findNextUnusedLoopText(allLoopTextEls, usedLoopIndices);
+          branchTitleEls.push(btelEl);
           var si = boundBlock.branchIndices[b];
           branchStatements.push(stmts && stmts[si] ? stmts[si] : {});
+
+          var bInfo = {
+            blockId: boundBlock.id,
+            statementIndex: si,
+            text: (stmts && stmts[si] ? stmts[si].text : '') || ''
+          };
+          allBranchItems.push(bInfo);
+
+          if (btelEl) {
+            branchElRefs.push({ el: btelEl, info: bInfo });
+            if (btelEl.getBBox) {
+              try {
+                var bbb = btelEl.getBBox();
+                allBranchClickRanges.push(Object.assign({
+                  yMin: bbb.y - 14,
+                  yMax: bbb.y + Math.max(bbb.height, 16) + 14
+                }, bInfo));
+              } catch (eBBox) {}
+            }
+          }
         }
 
         this._attachBlockElementInteractions(
@@ -315,6 +342,75 @@
           sharedHideNow,
           sharedScheduleHide
         );
+      }
+
+      // participant hover zone 등 overlay가 else/and 텍스트를 가릴 수 있으므로
+      // svgEl에 capture 단계 리스너를 달아 어떤 element보다 먼저 분기 클릭을 잡는다.
+      // 전략1(Y범위) → 전략2(element identity) → 전략3(텍스트 매칭) 순서로 시도
+      if (allBranchItems.length) {
+        svgEl.addEventListener('click', function (e) {
+          try {
+            var matched = null;
+
+            // 전략1: pre-computed Y 범위
+            if (!matched && allBranchClickRanges.length) {
+              var svgPt = SvgPositionTracker.getSVGPoint(svgEl, e.clientX, e.clientY);
+              if (svgPt) {
+                for (var ri = 0; ri < allBranchClickRanges.length; ri++) {
+                  var range = allBranchClickRanges[ri];
+                  if (svgPt.y >= range.yMin && svgPt.y <= range.yMax) {
+                    matched = range; break;
+                  }
+                }
+              }
+            }
+
+            // 전략2: 클릭 위치의 모든 element 중 branch loopText 찾기
+            if (!matched && branchElRefs.length && document.elementsFromPoint) {
+              var pointEls = document.elementsFromPoint(e.clientX, e.clientY);
+              outer: for (var pi = 0; pi < pointEls.length; pi++) {
+                for (var bi = 0; bi < branchElRefs.length; bi++) {
+                  if (pointEls[pi] === branchElRefs[bi].el) {
+                    matched = branchElRefs[bi].info; break outer;
+                  }
+                }
+              }
+            }
+
+            // 전략3: 텍스트 내용 매칭 (loopText 클래스 한정)
+            if (!matched && allBranchItems.length && document.elementsFromPoint) {
+              var pointEls3 = document.elementsFromPoint(e.clientX, e.clientY);
+              outer3: for (var pi3 = 0; pi3 < pointEls3.length; pi3++) {
+                var pel = pointEls3[pi3];
+                if (!pel || !pel.classList || !pel.classList.contains('loopText')) continue;
+                var pelText = pel.textContent ? pel.textContent.trim().replace(/^\[|\]$/g, '') : '';
+                for (var bi3 = 0; bi3 < allBranchItems.length; bi3++) {
+                  if (allBranchItems[bi3].text && pelText === allBranchItems[bi3].text) {
+                    matched = allBranchItems[bi3]; break outer3;
+                  }
+                }
+              }
+            }
+
+            if (matched) {
+              e.stopPropagation();
+              ctx.setState({
+                selectedSequenceParticipantId: null,
+                selectedSequenceMessageIndex: null,
+                selectedSequenceMessageIndices: [],
+                selectedSequenceBlockId: matched.blockId,
+                sequenceToolbar: {
+                  type: 'branch-title',
+                  blockId: matched.blockId,
+                  statementIndex: matched.statementIndex,
+                  text: matched.text,
+                  x: e.clientX,
+                  y: e.clientY
+                }
+              });
+            }
+          } catch (eCapture) {}
+        }, true); // capture 단계 — overlay보다 먼저 실행
       }
 
       // 3차: recognized 블록이 소비하지 못한 나머지 labelText = critical/break/box 등
@@ -399,13 +495,58 @@
     },
 
     _attachBlockElementInteractions: function (svgEl, block, labelEl, titleEl, branchTitleEls, branchStatements, ctx, model, participantMap, btnOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide) {
-      // labelText의 부모 그룹(labelBox rect 포함)을 클릭 → toolbar
+      // 분기 title Y 범위를 미리 계산 — labelGroup 클릭 핸들러 안에서 Y 라우팅에 사용
+      var branchYRanges = [];
+      for (var pre = 0; pre < branchTitleEls.length; pre++) {
+        var bel = branchTitleEls[pre];
+        if (!bel || !bel.getBBox) continue;
+        try {
+          var bbb = bel.getBBox();
+          branchYRanges.push({
+            yMin: bbb.y - 12,
+            yMax: bbb.y + Math.max(bbb.height, 16) + 12,
+            statementIndex: block.branchIndices[pre],
+            branchStmt: branchStatements[pre] || {}
+          });
+        } catch (e0) {}
+      }
+
+      // labelText의 부모 그룹(labelBox rect 포함)을 클릭 → Y 위치 기반 라우팅
+      // labelGroup의 배경 rect가 else/and 행도 덮으므로, 클릭 Y로 분기 여부 판단한다.
       var labelGroup = labelEl && (labelEl.closest ? labelEl.closest('g') : labelEl.parentNode);
       if (labelGroup) {
         labelGroup.style.cursor = 'pointer';
         labelGroup.style.pointerEvents = 'all';
         labelGroup.addEventListener('click', function (e) {
           e.stopPropagation();
+          // else/and 분기 행 클릭인지 Y 좌표로 판단
+          if (branchYRanges.length) {
+            try {
+              var svgPt = SvgPositionTracker.getSVGPoint(svgEl, e.clientX, e.clientY);
+              if (svgPt) {
+                for (var bi = 0; bi < branchYRanges.length; bi++) {
+                  var range = branchYRanges[bi];
+                  if (svgPt.y >= range.yMin && svgPt.y <= range.yMax) {
+                    ctx.setState({
+                      selectedSequenceParticipantId: null,
+                      selectedSequenceMessageIndex: null,
+                      selectedSequenceMessageIndices: [],
+                      selectedSequenceBlockId: block.id,
+                      sequenceToolbar: {
+                        type: 'branch-title',
+                        blockId: block.id,
+                        statementIndex: range.statementIndex,
+                        text: range.branchStmt.text || '',
+                        x: e.clientX,
+                        y: e.clientY
+                      }
+                    });
+                    return;
+                  }
+                }
+              }
+            } catch (eRoute) {}
+          }
           ctx.setState({
             selectedSequenceParticipantId: null,
             selectedSequenceMessageIndex: null,
@@ -453,34 +594,13 @@
         };
         titleEl.addEventListener('click', onTitleClick);
 
-        // 투명 hit rect로 클릭/hover 영역 확장
-        var hitRect = null;
-        if (btnOverlay) {
-          try {
-            var titleBbox = titleEl.getBBox ? titleEl.getBBox() : null;
-            if (titleBbox && titleBbox.width) {
-              var PAD = 14;
-              hitRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-              hitRect.setAttribute('x', titleBbox.x - PAD);
-              hitRect.setAttribute('y', titleBbox.y - PAD);
-              hitRect.setAttribute('width', titleBbox.width + PAD * 2);
-              hitRect.setAttribute('height', titleBbox.height + PAD * 2);
-              hitRect.setAttribute('fill', 'transparent');
-              hitRect.setAttribute('rx', '4');
-              hitRect.style.pointerEvents = 'all';
-              hitRect.style.cursor = 'pointer';
-              btnOverlay.appendChild(hitRect);
-              hitRect.addEventListener('click', onTitleClick);
-            }
-          } catch (e3) {}
-        }
-
         if (btnOverlay && participantMap && SequenceSvgHandler) {
           var onTitleEnter = function () {
             var bbox;
             try { bbox = titleEl.getBBox ? titleEl.getBBox() : null; } catch (e2) {}
             if (!bbox || !bbox.width) return;
             sharedHideNow();
+            if (svgEl.dataset) svgEl.dataset.blockBtnActive = '1';
 
             // participant마다 + 버튼 하나씩, 각자의 lifeline cx에 배치
             var allBtns = [];
@@ -500,41 +620,16 @@
           };
           titleEl.addEventListener('mouseenter', onTitleEnter);
           titleEl.addEventListener('mouseleave', sharedScheduleHide);
-
-          // hit rect에도 동일한 이벤트 연결
-          if (hitRect) {
-            hitRect.addEventListener('mouseenter', onTitleEnter);
-            hitRect.addEventListener('mouseleave', sharedScheduleHide);
-          }
         }
       }
 
-      // 분기 title(loopText) 클릭 → 컨텍스트 툴바 (Edit / Delete)
+      // 분기 title cursor 표시 (클릭은 labelGroup Y 라우팅이 처리)
       for (var b = 0; b < branchTitleEls.length; b++) {
-        (function (branchEl, statementIndex, branchStmt) {
-          if (!branchEl) return;
-          branchEl.style.cursor = 'pointer';
-          branchEl.style.pointerEvents = 'all';
-          branchEl.addEventListener('click', function (e) {
-            e.stopPropagation();
-            if (ctx.setState) {
-              ctx.setState({
-                selectedSequenceParticipantId: null,
-                selectedSequenceMessageIndex: null,
-                selectedSequenceMessageIndices: [],
-                selectedSequenceBlockId: block.id,
-                sequenceToolbar: {
-                  type: 'branch-title',
-                  blockId: block.id,
-                  statementIndex: statementIndex,
-                  text: branchStmt.text || '',
-                  x: e.clientX,
-                  y: e.clientY
-                }
-              });
-            }
-          });
-        }(branchTitleEls[b], block.branchIndices[b], branchStatements[b] || {}));
+        var bCursorEl = branchTitleEls[b];
+        if (bCursorEl) {
+          bCursorEl.style.cursor = 'pointer';
+          bCursorEl.style.pointerEvents = 'all';
+        }
       }
     },
 

@@ -1,6 +1,6 @@
 /**
  * gui-editor.component.js
- * Built: 2026-05-08T06:40:24.832Z
+ * Built: 2026-05-08T07:47:40.552Z
  *
  * Concatenation of gui-editor source files (no minification).
  * Requires global Vue 2 and Mermaid loaded separately.
@@ -4660,84 +4660,140 @@
       return results;
     },
 
-    collectInsertSlots: function (participantMap, messages) {
-      var rows = [];
-      for (var i = 0; i < messages.length; i++) {
-        if (messages[i] && messages[i].rowY !== null && messages[i].rowY !== undefined) {
-          rows.push(messages[i].rowY);
+    collectInsertSlots: function (participantMap, messages, notes, model) {
+      var stmts = (model && model.statements) || [];
+
+      // 각 message의 statement index 사전 계산
+      var msgStmtIndices = [];
+      var mc = 0;
+      for (var s = 0; s < stmts.length; s++) {
+        if (stmts[s] && stmts[s].type === 'message') {
+          msgStmtIndices[mc] = s;
+          mc++;
         }
       }
 
-      rows.sort(function (a, b) { return a - b; });
+      // message와 note를 Y 기준으로 합친 이벤트 목록 생성
+      var events = [];
+      for (var i = 0; i < messages.length; i++) {
+        if (messages[i] && messages[i].rowY !== null && messages[i].rowY !== undefined) {
+          var mIdx = messages[i].index !== undefined ? messages[i].index : i;
+          events.push({
+            y: messages[i].rowY,
+            isMessage: true,
+            statementIndex: msgStmtIndices[mIdx] !== undefined ? msgStmtIndices[mIdx] : stmts.length
+          });
+        }
+      }
+      for (var n = 0; n < (notes || []).length; n++) {
+        var nb = notes[n] && notes[n].bbox;
+        if (nb) {
+          events.push({
+            y: nb.y + nb.height / 2,
+            isMessage: false,
+            statementIndex: notes[n].statementIndex
+          });
+        }
+      }
+      events.sort(function (a, b) { return a.y - b.y; });
+
+      // 각 이벤트 앞에 있는 message 수 계산
+      var msgCountBefore = [];
+      var runCount = 0;
+      for (var e = 0; e < events.length; e++) {
+        msgCountBefore.push(runCount);
+        if (events[e].isMessage) runCount++;
+      }
+      var totalMessages = runCount;
 
       var ids = Object.keys(participantMap);
       if (!ids.length) return [];
-
       var sample = participantMap[ids[0]];
       if (!sample) return [];
 
       var slots = [];
       var topY = sample.lifelineTopY + 18;
       var bottomY = sample.lifelineBottomY - 18;
-
       var MIN_SLOT_GAP = 34;
 
-      if (!rows.length) {
-        slots.push({
-          y: (topY + bottomY) / 2,
-          insertIndex: 0
-        });
+      if (!events.length) {
+        slots.push({ y: (topY + bottomY) / 2, insertIndex: 0, stmtInsertAt: 0 });
         return slots;
       }
 
+      // 맨 위 슬롯: 첫 이벤트 앞
       slots.push({
-        y: Math.max(topY + 12, rows[0] - 48),
-        insertIndex: 0
+        y: Math.max(topY + 12, events[0].y - 48),
+        insertIndex: 0,
+        stmtInsertAt: events[0].statementIndex
       });
 
-      for (var r = 0; r < rows.length - 1; r++) {
-        var midY = (rows[r] + rows[r + 1]) / 2;
-        slots.push({
-          y: midY,
-          insertIndex: r + 1
-        });
+      // 이벤트 사이 슬롯
+      // 두 이벤트 사이에 end 문이 있으면 블록 안/밖 슬롯 두 개 생성
+      for (var r = 0; r < events.length - 1; r++) {
+        var midY = (events[r].y + events[r + 1].y) / 2;
+        var lastEndIdx = -1;
+        for (var si = events[r].statementIndex + 1; si < events[r + 1].statementIndex; si++) {
+          if (stmts[si] && stmts[si].type === 'end') {
+            lastEndIdx = si; // 마지막 end → outermost block 직전
+          }
+        }
+
+        if (lastEndIdx !== -1) {
+          // 블록 경계: 안쪽(end 앞)과 바깥쪽(다음 이벤트 앞) 두 슬롯
+          slots.push({
+            y: midY - 20,
+            insertIndex: msgCountBefore[r + 1],
+            stmtInsertAt: lastEndIdx,
+            _nomerge: true
+          });
+          slots.push({
+            y: midY + 20,
+            insertIndex: msgCountBefore[r + 1],
+            stmtInsertAt: events[r + 1].statementIndex,
+            _nomerge: true
+          });
+        } else {
+          slots.push({
+            y: midY,
+            insertIndex: msgCountBefore[r + 1],
+            stmtInsertAt: events[r + 1].statementIndex
+          });
+        }
       }
 
-      // 맨 아래보다는 중간 삽입을 우선하지만, 마지막 뒤에 추가할 슬롯도 유지한다.
+      // 맨 아래 슬롯: 마지막 이벤트 뒤
       slots.push({
-        y: Math.min(bottomY - 12, rows[rows.length - 1] + 48),
-        insertIndex: rows.length
+        y: Math.min(bottomY - 12, events[events.length - 1].y + 48),
+        insertIndex: totalMessages,
+        stmtInsertAt: events[events.length - 1].statementIndex + 1
       });
 
-      // 맨 위/맨 아래 슬롯은 항상 유지하고,
-      // 중간 슬롯끼리만 합쳐 + 버튼 겹침을 줄인다.
       if (slots.length <= 2) return slots;
 
+      // 중간 슬롯 간격 병합 (맨 위/아래 및 _nomerge 플래그 슬롯은 유지)
       var deduped = [slots[0]];
-      for (var s = 1; s < slots.length - 1; s++) {
-        var current = slots[s];
+      for (var d = 1; d < slots.length - 1; d++) {
+        var cur = slots[d];
         var prev = deduped[deduped.length - 1];
-        if (prev !== slots[0] && Math.abs(current.y - prev.y) < MIN_SLOT_GAP) {
-          prev.y = (prev.y + current.y) / 2;
-          prev.insertIndex = Math.max(prev.insertIndex, current.insertIndex);
+        if (!cur._nomerge && !prev._nomerge && prev !== slots[0] && Math.abs(cur.y - prev.y) < MIN_SLOT_GAP) {
+          prev.y = (prev.y + cur.y) / 2;
+          prev.insertIndex = Math.max(prev.insertIndex, cur.insertIndex);
+          prev.stmtInsertAt = Math.max(prev.stmtInsertAt, cur.stmtInsertAt);
         } else {
-          deduped.push(current);
+          deduped.push(cur);
         }
       }
       deduped.push(slots[slots.length - 1]);
 
-      // 끝 슬롯은 항상 남기되, 바로 옆 슬롯과 최소 간격을 강제로 확보한다.
       if (deduped.length >= 2) {
-        var first = deduped[0];
-        var second = deduped[1];
+        var first = deduped[0], second = deduped[1];
         if (Math.abs(second.y - first.y) < MIN_SLOT_GAP) {
           first.y = Math.max(topY + 8, second.y - MIN_SLOT_GAP);
         }
       }
-
       if (deduped.length >= 2) {
-        var last = deduped[deduped.length - 1];
-        var beforeLast = deduped[deduped.length - 2];
+        var last = deduped[deduped.length - 1], beforeLast = deduped[deduped.length - 2];
         if (Math.abs(last.y - beforeLast.y) < MIN_SLOT_GAP) {
           last.y = Math.min(bottomY - 8, beforeLast.y + MIN_SLOT_GAP);
         }
@@ -4901,6 +4957,7 @@
       zone.addEventListener('mouseenter', function () {
         if (self._dragging) return;
         if (svgEl.dataset && svgEl.dataset.noteHoverActive) return;
+        if (svgEl.dataset && svgEl.dataset.blockBtnActive) return;
         self.clearHandles();
         for (var i = 0; i < slots.length; i++) {
           self._addHandle(svgEl, participant, slots[i], participantMap, ctx);
@@ -4969,7 +5026,7 @@
             didDrag = true;
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            self._startDrag(svgEl, participant.id, x, y, slot.insertIndex, participantMap, ctx);
+            self._startDrag(svgEl, participant.id, x, y, slot, participantMap, ctx);
           }
         };
 
@@ -4987,6 +5044,7 @@
                 type: 'insert',
                 participantId: participant.id,
                 insertIndex: slot.insertIndex,
+                stmtInsertAt: slot.stmtInsertAt,
                 x: screen ? screen.x : e.clientX,
                 y: screen ? screen.y : e.clientY
               }
@@ -5007,7 +5065,9 @@
       this._handles.push(hit, circle, plus);
     },
 
-    _startDrag: function (svgEl, fromId, startX, startY, insertIndex, participantMap, ctx) {
+    _startDrag: function (svgEl, fromId, startX, startY, slot, participantMap, ctx) {
+      var insertIndex = slot && slot.insertIndex !== undefined ? slot.insertIndex : slot;
+      var stmtInsertAt = slot && slot.stmtInsertAt !== undefined ? slot.stmtInsertAt : undefined;
       var self = this;
       this._bringOverlayToFront(svgEl);
       this._dragging = true;
@@ -5116,12 +5176,9 @@
         var svgPt = SvgPositionTracker.getSVGPoint(svgEl, me.clientX, me.clientY);
         var target = self._findTarget(svgPt.x, svgPt.y, fromId, startY, participantMap);
         if (target) {
-          ctx.emit('add-sequence-message', {
-            fromId: fromId,
-            toId: target,
-            text: 'new msg',
-            insertIndex: insertIndex
-          });
+          var payload = { fromId: fromId, toId: target, text: 'new msg', insertIndex: insertIndex };
+          if (stmtInsertAt !== undefined) payload.stmtInsertAt = stmtInsertAt;
+          ctx.emit('add-sequence-message', payload);
         }
       };
 
@@ -5464,6 +5521,7 @@
           for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
           shared.btns = null;
         }
+        if (svgEl.dataset) delete svgEl.dataset.blockBtnActive;
       }
       function sharedScheduleHide() {
         sharedCancelHide();
@@ -5493,15 +5551,41 @@
         return a.block.statementIndex - b.block.statementIndex;
       });
 
+      // 분기 클릭 라우팅용 데이터 수집 (3단계 전략)
+      var allBranchClickRanges = []; // 전략1: Y 범위 (getBBox 성공 시)
+      var branchElRefs = [];          // 전략2: element identity (elementsFromPoint)
+      var allBranchItems = [];        // 전략3: 항상 채워지는 모델 기반 목록
+
       for (var j = 0; j < sortedBindings.length; j++) {
         var binding = sortedBindings[j];
         var boundBlock = binding.block;
         var branchTitleEls = [];
         var branchStatements = [];
         for (var b = 0; b < boundBlock.branchIndices.length; b++) {
-          branchTitleEls.push(this._findNextUnusedLoopText(allLoopTextEls, usedLoopIndices));
+          var btelEl = this._findNextUnusedLoopText(allLoopTextEls, usedLoopIndices);
+          branchTitleEls.push(btelEl);
           var si = boundBlock.branchIndices[b];
           branchStatements.push(stmts && stmts[si] ? stmts[si] : {});
+
+          var bInfo = {
+            blockId: boundBlock.id,
+            statementIndex: si,
+            text: (stmts && stmts[si] ? stmts[si].text : '') || ''
+          };
+          allBranchItems.push(bInfo);
+
+          if (btelEl) {
+            branchElRefs.push({ el: btelEl, info: bInfo });
+            if (btelEl.getBBox) {
+              try {
+                var bbb = btelEl.getBBox();
+                allBranchClickRanges.push(Object.assign({
+                  yMin: bbb.y - 14,
+                  yMax: bbb.y + Math.max(bbb.height, 16) + 14
+                }, bInfo));
+              } catch (eBBox) {}
+            }
+          }
         }
 
         this._attachBlockElementInteractions(
@@ -5520,6 +5604,75 @@
           sharedHideNow,
           sharedScheduleHide
         );
+      }
+
+      // participant hover zone 등 overlay가 else/and 텍스트를 가릴 수 있으므로
+      // svgEl에 capture 단계 리스너를 달아 어떤 element보다 먼저 분기 클릭을 잡는다.
+      // 전략1(Y범위) → 전략2(element identity) → 전략3(텍스트 매칭) 순서로 시도
+      if (allBranchItems.length) {
+        svgEl.addEventListener('click', function (e) {
+          try {
+            var matched = null;
+
+            // 전략1: pre-computed Y 범위
+            if (!matched && allBranchClickRanges.length) {
+              var svgPt = SvgPositionTracker.getSVGPoint(svgEl, e.clientX, e.clientY);
+              if (svgPt) {
+                for (var ri = 0; ri < allBranchClickRanges.length; ri++) {
+                  var range = allBranchClickRanges[ri];
+                  if (svgPt.y >= range.yMin && svgPt.y <= range.yMax) {
+                    matched = range; break;
+                  }
+                }
+              }
+            }
+
+            // 전략2: 클릭 위치의 모든 element 중 branch loopText 찾기
+            if (!matched && branchElRefs.length && document.elementsFromPoint) {
+              var pointEls = document.elementsFromPoint(e.clientX, e.clientY);
+              outer: for (var pi = 0; pi < pointEls.length; pi++) {
+                for (var bi = 0; bi < branchElRefs.length; bi++) {
+                  if (pointEls[pi] === branchElRefs[bi].el) {
+                    matched = branchElRefs[bi].info; break outer;
+                  }
+                }
+              }
+            }
+
+            // 전략3: 텍스트 내용 매칭 (loopText 클래스 한정)
+            if (!matched && allBranchItems.length && document.elementsFromPoint) {
+              var pointEls3 = document.elementsFromPoint(e.clientX, e.clientY);
+              outer3: for (var pi3 = 0; pi3 < pointEls3.length; pi3++) {
+                var pel = pointEls3[pi3];
+                if (!pel || !pel.classList || !pel.classList.contains('loopText')) continue;
+                var pelText = pel.textContent ? pel.textContent.trim().replace(/^\[|\]$/g, '') : '';
+                for (var bi3 = 0; bi3 < allBranchItems.length; bi3++) {
+                  if (allBranchItems[bi3].text && pelText === allBranchItems[bi3].text) {
+                    matched = allBranchItems[bi3]; break outer3;
+                  }
+                }
+              }
+            }
+
+            if (matched) {
+              e.stopPropagation();
+              ctx.setState({
+                selectedSequenceParticipantId: null,
+                selectedSequenceMessageIndex: null,
+                selectedSequenceMessageIndices: [],
+                selectedSequenceBlockId: matched.blockId,
+                sequenceToolbar: {
+                  type: 'branch-title',
+                  blockId: matched.blockId,
+                  statementIndex: matched.statementIndex,
+                  text: matched.text,
+                  x: e.clientX,
+                  y: e.clientY
+                }
+              });
+            }
+          } catch (eCapture) {}
+        }, true); // capture 단계 — overlay보다 먼저 실행
       }
 
       // 3차: recognized 블록이 소비하지 못한 나머지 labelText = critical/break/box 등
@@ -5604,13 +5757,58 @@
     },
 
     _attachBlockElementInteractions: function (svgEl, block, labelEl, titleEl, branchTitleEls, branchStatements, ctx, model, participantMap, btnOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide) {
-      // labelText의 부모 그룹(labelBox rect 포함)을 클릭 → toolbar
+      // 분기 title Y 범위를 미리 계산 — labelGroup 클릭 핸들러 안에서 Y 라우팅에 사용
+      var branchYRanges = [];
+      for (var pre = 0; pre < branchTitleEls.length; pre++) {
+        var bel = branchTitleEls[pre];
+        if (!bel || !bel.getBBox) continue;
+        try {
+          var bbb = bel.getBBox();
+          branchYRanges.push({
+            yMin: bbb.y - 12,
+            yMax: bbb.y + Math.max(bbb.height, 16) + 12,
+            statementIndex: block.branchIndices[pre],
+            branchStmt: branchStatements[pre] || {}
+          });
+        } catch (e0) {}
+      }
+
+      // labelText의 부모 그룹(labelBox rect 포함)을 클릭 → Y 위치 기반 라우팅
+      // labelGroup의 배경 rect가 else/and 행도 덮으므로, 클릭 Y로 분기 여부 판단한다.
       var labelGroup = labelEl && (labelEl.closest ? labelEl.closest('g') : labelEl.parentNode);
       if (labelGroup) {
         labelGroup.style.cursor = 'pointer';
         labelGroup.style.pointerEvents = 'all';
         labelGroup.addEventListener('click', function (e) {
           e.stopPropagation();
+          // else/and 분기 행 클릭인지 Y 좌표로 판단
+          if (branchYRanges.length) {
+            try {
+              var svgPt = SvgPositionTracker.getSVGPoint(svgEl, e.clientX, e.clientY);
+              if (svgPt) {
+                for (var bi = 0; bi < branchYRanges.length; bi++) {
+                  var range = branchYRanges[bi];
+                  if (svgPt.y >= range.yMin && svgPt.y <= range.yMax) {
+                    ctx.setState({
+                      selectedSequenceParticipantId: null,
+                      selectedSequenceMessageIndex: null,
+                      selectedSequenceMessageIndices: [],
+                      selectedSequenceBlockId: block.id,
+                      sequenceToolbar: {
+                        type: 'branch-title',
+                        blockId: block.id,
+                        statementIndex: range.statementIndex,
+                        text: range.branchStmt.text || '',
+                        x: e.clientX,
+                        y: e.clientY
+                      }
+                    });
+                    return;
+                  }
+                }
+              }
+            } catch (eRoute) {}
+          }
           ctx.setState({
             selectedSequenceParticipantId: null,
             selectedSequenceMessageIndex: null,
@@ -5658,34 +5856,13 @@
         };
         titleEl.addEventListener('click', onTitleClick);
 
-        // 투명 hit rect로 클릭/hover 영역 확장
-        var hitRect = null;
-        if (btnOverlay) {
-          try {
-            var titleBbox = titleEl.getBBox ? titleEl.getBBox() : null;
-            if (titleBbox && titleBbox.width) {
-              var PAD = 14;
-              hitRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-              hitRect.setAttribute('x', titleBbox.x - PAD);
-              hitRect.setAttribute('y', titleBbox.y - PAD);
-              hitRect.setAttribute('width', titleBbox.width + PAD * 2);
-              hitRect.setAttribute('height', titleBbox.height + PAD * 2);
-              hitRect.setAttribute('fill', 'transparent');
-              hitRect.setAttribute('rx', '4');
-              hitRect.style.pointerEvents = 'all';
-              hitRect.style.cursor = 'pointer';
-              btnOverlay.appendChild(hitRect);
-              hitRect.addEventListener('click', onTitleClick);
-            }
-          } catch (e3) {}
-        }
-
         if (btnOverlay && participantMap && SequenceSvgHandler) {
           var onTitleEnter = function () {
             var bbox;
             try { bbox = titleEl.getBBox ? titleEl.getBBox() : null; } catch (e2) {}
             if (!bbox || !bbox.width) return;
             sharedHideNow();
+            if (svgEl.dataset) svgEl.dataset.blockBtnActive = '1';
 
             // participant마다 + 버튼 하나씩, 각자의 lifeline cx에 배치
             var allBtns = [];
@@ -5705,41 +5882,16 @@
           };
           titleEl.addEventListener('mouseenter', onTitleEnter);
           titleEl.addEventListener('mouseleave', sharedScheduleHide);
-
-          // hit rect에도 동일한 이벤트 연결
-          if (hitRect) {
-            hitRect.addEventListener('mouseenter', onTitleEnter);
-            hitRect.addEventListener('mouseleave', sharedScheduleHide);
-          }
         }
       }
 
-      // 분기 title(loopText) 클릭 → 컨텍스트 툴바 (Edit / Delete)
+      // 분기 title cursor 표시 (클릭은 labelGroup Y 라우팅이 처리)
       for (var b = 0; b < branchTitleEls.length; b++) {
-        (function (branchEl, statementIndex, branchStmt) {
-          if (!branchEl) return;
-          branchEl.style.cursor = 'pointer';
-          branchEl.style.pointerEvents = 'all';
-          branchEl.addEventListener('click', function (e) {
-            e.stopPropagation();
-            if (ctx.setState) {
-              ctx.setState({
-                selectedSequenceParticipantId: null,
-                selectedSequenceMessageIndex: null,
-                selectedSequenceMessageIndices: [],
-                selectedSequenceBlockId: block.id,
-                sequenceToolbar: {
-                  type: 'branch-title',
-                  blockId: block.id,
-                  statementIndex: statementIndex,
-                  text: branchStmt.text || '',
-                  x: e.clientX,
-                  y: e.clientY
-                }
-              });
-            }
-          });
-        }(branchTitleEls[b], block.branchIndices[b], branchStatements[b] || {}));
+        var bCursorEl = branchTitleEls[b];
+        if (bCursorEl) {
+          bCursorEl.style.cursor = 'pointer';
+          bCursorEl.style.pointerEvents = 'all';
+        }
       }
     },
 
@@ -5770,13 +5922,14 @@
       var participantMap = SequencePositionTracker.collectParticipants(svgEl, model);
       var participantTargets = SequencePositionTracker.collectParticipantTargets(svgEl, model);
       var messages = SequencePositionTracker.collectMessages(svgEl, model);
+      var notes = SequencePositionTracker.collectNotePositions(svgEl, model);
       participantMap = SequencePositionTracker.refineParticipantLifelines(participantMap, messages);
-      var insertSlots = SequencePositionTracker.collectInsertSlots(participantMap, messages);
+      var insertSlots = SequencePositionTracker.collectInsertSlots(participantMap, messages, notes, model);
 
       SequenceMessageDragHandler.initOverlay(svgEl);
       SequenceMessageDragHandler.attach(svgEl, participantMap, insertSlots, ctx);
       SequenceSvgHandler._attachParticipants(participantTargets, svgEl, ctx);
-      SequenceSvgHandler._attachMessages(messages, svgEl, model, participantMap, ctx);
+      SequenceSvgHandler._attachMessages(messages, svgEl, ctx);
       SequenceSvgHandler._attachNotes(svgEl, model, ctx, participantMap);
     },
 
@@ -5819,36 +5972,13 @@
       ctx.watchSequenceParticipantSelection(data.id, el);
     },
 
-    _attachMessages: function (messages, svgEl, model, participantMap, ctx) {
-      var oldOverlay = svgEl.querySelector('#sequence-message-insert-overlay');
-      if (oldOverlay) oldOverlay.remove();
-      var msgOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      msgOverlay.setAttribute('id', 'sequence-message-insert-overlay');
-      svgEl.appendChild(msgOverlay);
-
-      var shared = { btns: null, hideTimer: null };
-
-      function sharedCancelHide() {
-        if (shared.hideTimer !== null) { clearTimeout(shared.hideTimer); shared.hideTimer = null; }
-      }
-      function sharedHideNow() {
-        sharedCancelHide();
-        if (shared.btns) {
-          for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
-          shared.btns = null;
-        }
-      }
-      function sharedScheduleHide() {
-        sharedCancelHide();
-        shared.hideTimer = setTimeout(function () { sharedHideNow(); }, 150);
-      }
-
+    _attachMessages: function (messages, svgEl, ctx) {
       for (var i = 0; i < messages.length; i++) {
-        SequenceSvgHandler._attachMessage(messages[i], svgEl, model, participantMap, msgOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide, ctx);
+        SequenceSvgHandler._attachMessage(messages[i], svgEl, ctx);
       }
     },
 
-    _attachMessage: function (data, svgEl, model, participantMap, msgOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide, ctx) {
+    _attachMessage: function (data, svgEl, ctx) {
       if (!data.lineEl && !data.textEl) return;
       var hitEl = SequenceSvgHandler._makeMessageHit(svgEl, data);
       var visualEl = data.lineEl || data.textEl;
@@ -5887,43 +6017,13 @@
       hitEl.addEventListener('dblclick', onEdit);
       if (textEl && textEl !== hitEl) textEl.addEventListener('dblclick', onEdit);
 
-      // message statement index 계산 (위/아래 버튼의 stmtInsertAt에 사용)
-      var msgStmtIndex = (function () {
-        var stmts = (model && model.statements) || [];
-        var count = 0;
-        for (var si = 0; si < stmts.length; si++) {
-          if (stmts[si] && stmts[si].type === 'message') {
-            if (count === data.index) return si;
-            count++;
-          }
-        }
-        return stmts.length;
-      }());
-
-      var modelMsg = model && model.messages && model.messages[data.index];
-      var msgFromId = modelMsg ? modelMsg.from : null;
-
       hitEl.addEventListener('mouseenter', function () {
         if (visualEl) visualEl.classList.add('sequence-message-hovered');
         if (textEl) textEl.classList.add('sequence-message-text-hovered');
-        if (!data.bbox) return;
-        sharedHideNow();
-        // from participant lifeline cx에서 메시지 방향으로 살짝 앞에 배치
-        var fromEntry = msgFromId && participantMap && participantMap[msgFromId];
-        var bboxCx = data.bbox.x + data.bbox.width / 2;
-        var cx = fromEntry
-          ? fromEntry.cx + (fromEntry.cx < bboxCx ? 28 : -28)
-          : (data.bbox.x + 20);
-        shared.btns = SequenceSvgHandler._createNoteInsertButtons(
-          msgOverlay, data.bbox, msgStmtIndex, msgFromId,
-          svgEl, model, participantMap, ctx,
-          sharedCancelHide, sharedScheduleHide, cx
-        );
       });
       hitEl.addEventListener('mouseleave', function () {
         if (visualEl) visualEl.classList.remove('sequence-message-hovered');
         if (textEl) textEl.classList.remove('sequence-message-text-hovered');
-        sharedScheduleHide();
       });
 
       ctx.watchSequenceMessageSelection(data.index, visualEl, textEl);
@@ -6056,36 +6156,6 @@
         if (g && seenGroups.indexOf(g) === -1) { seenGroups.push(g); noteGroups.push(g); }
       }
 
-      // note insert + 버튼용 overlay
-      var oldOverlay = svgEl.querySelector('#sequence-note-insert-overlay');
-      if (oldOverlay) oldOverlay.remove();
-      var noteOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      noteOverlay.setAttribute('id', 'sequence-note-insert-overlay');
-      svgEl.appendChild(noteOverlay);
-
-      // 동시에 하나의 note + 버튼만 표시되도록 공유 상태 사용
-      var shared = { btns: null, hideTimer: null };
-
-      function sharedCancelHide() {
-        if (shared.hideTimer !== null) { clearTimeout(shared.hideTimer); shared.hideTimer = null; }
-      }
-
-      function sharedHideNow() {
-        sharedCancelHide();
-        if (shared.btns) {
-          for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
-          shared.btns = null;
-        }
-        if (svgEl.dataset) delete svgEl.dataset.noteHoverActive;
-      }
-
-      function sharedScheduleHide() {
-        sharedCancelHide();
-        shared.hideTimer = setTimeout(function () {
-          sharedHideNow();
-        }, 150);
-      }
-
       for (var j = 0; j < Math.min(noteGroups.length, noteStatements.length); j++) {
         (function (noteGroup, noteInfo) {
           noteGroup.style.cursor = 'pointer';
@@ -6115,20 +6185,6 @@
               ctx.openSequenceNoteEdit(noteInfo.statementIndex, noteInfo.statement.text || '', e.clientX, e.clientY);
             }
           });
-
-          noteGroup.addEventListener('mouseenter', function () {
-            // 다른 note의 버튼을 즉시 제거하고 이 note의 버튼을 표시
-            sharedHideNow();
-            if (svgEl.dataset) svgEl.dataset.noteHoverActive = '1';
-            var bbox;
-            try { bbox = noteGroup.getBBox(); } catch (e) { return; }
-            var participantId = noteInfo.statement.participants && noteInfo.statement.participants[0];
-            shared.btns = SequenceSvgHandler._createNoteInsertButtons(
-              noteOverlay, bbox, noteInfo.statementIndex, participantId, svgEl, model, participantMap, ctx,
-              sharedCancelHide, sharedScheduleHide
-            );
-          });
-          noteGroup.addEventListener('mouseleave', sharedScheduleHide);
 
           if (ctx.watchSequenceNoteMultiSelection) {
             ctx.watchSequenceNoteMultiSelection(noteInfo.statementIndex, noteGroup);
@@ -8399,7 +8455,7 @@ Vue.component('mermaid-preview', {
       if (!this.sequenceToolbar || this.sequenceToolbar.type !== 'selection') return;
       this.$emit('add-sequence-branch', {
         keyword: keyword,
-        text: keyword === 'else' ? 'case' : 'task',
+        text: keyword === 'else' ? 'else title' : 'and title',
         messageIndices: (this.sequenceToolbar.messageIndices || []).slice(),
         noteStatementIndices: (this.sequenceToolbar.noteStatementIndices || []).slice()
       });

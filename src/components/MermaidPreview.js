@@ -1300,7 +1300,7 @@ Vue.component('mermaid-preview', {
       if (!this.sequenceToolbar || this.sequenceToolbar.type !== 'selection') return;
       this.$emit('add-sequence-branch', {
         keyword: keyword,
-        text: keyword === 'else' ? 'case' : 'task',
+        text: keyword === 'else' ? 'else title' : 'and title',
         messageIndices: (this.sequenceToolbar.messageIndices || []).slice(),
         noteStatementIndices: (this.sequenceToolbar.noteStatementIndices || []).slice()
       });
