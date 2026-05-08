@@ -1,6 +1,6 @@
 /**
  * gui-editor.component.js
- * Built: 2026-05-08T01:54:18.060Z
+ * Built: 2026-05-08T02:26:12.565Z
  *
  * Concatenation of gui-editor source files (no minification).
  * Requires global Vue 2 and Mermaid loaded separately.
@@ -483,6 +483,16 @@
     return statements;
   }
 
+  function insertNoteAtStatementIndex(model, statementIndex, participantId, text) {
+    var statements = cloneStatements(model);
+    var note = { type: 'note', participants: [participantId], text: text || 'Note' };
+    var idx = (statementIndex !== null && statementIndex !== undefined)
+      ? Math.max(0, Math.min(statementIndex, statements.length))
+      : statements.length;
+    statements.splice(idx, 0, note);
+    return statements;
+  }
+
   global.SequenceStatementUtils = {
     cloneStatements: cloneStatements,
     listBlocks: listBlocks,
@@ -499,7 +509,8 @@
     changeBlockKind: changeBlockKind,
     addNoteStatement: addNoteStatement,
     updateNoteText: updateNoteText,
-    deleteNoteStatement: deleteNoteStatement
+    deleteNoteStatement: deleteNoteStatement,
+    insertNoteAtStatementIndex: insertNoteAtStatementIndex
   };
 
 })(typeof window !== 'undefined' ? window : this);
@@ -2669,6 +2680,16 @@
       });
     },
 
+    insertNoteAtStatementIndex: function (model, data) {
+      if (!model || !data || !data.participantId || data.statementIndex === undefined) return model;
+      var insertAt = data.isBefore !== false ? data.statementIndex : data.statementIndex + 1;
+      return finish(model, {
+        statements: SequenceStatementUtils.insertNoteAtStatementIndex(
+          model, insertAt, data.participantId, data.text || 'Note'
+        )
+      });
+    },
+
     updateNoteText: function (model, data) {
       if (!model || !data || data.statementIndex === null || data.statementIndex === undefined) return model;
       var nextText = String(data.text || '').trim();
@@ -3196,6 +3217,20 @@
           if (el) { el.focus(); el.select(); }
         });
       },
+      insertSequenceNoteAt: function (statementIndex, participantId, isBefore) {
+        var pid = participantId;
+        if (!pid) {
+          var ps = vm.model.participants || [];
+          if (!ps.length) return;
+          pid = ps[0].id;
+        }
+        vm.$emit('insert-sequence-note-at', {
+          statementIndex: statementIndex,
+          participantId: pid,
+          isBefore: isBefore !== false
+        });
+      },
+
       openSequenceNoteEdit: function (statementIndex, text, clientX, clientY) {
         vm.sequenceToolbar = null;
         vm.editingSequenceNoteStatementIndex = statementIndex;
@@ -4741,6 +4776,7 @@
 
       zone.addEventListener('mouseenter', function () {
         if (self._dragging) return;
+        if (svgEl.dataset && svgEl.dataset.noteHoverActive) return;
         self.clearHandles();
         for (var i = 0; i < slots.length; i++) {
           self._addHandle(svgEl, participant, slots[i], participantMap, ctx);
@@ -5708,6 +5744,13 @@
         if (g && seenGroups.indexOf(g) === -1) { seenGroups.push(g); noteGroups.push(g); }
       }
 
+      // note insert + 버튼용 overlay
+      var oldOverlay = svgEl.querySelector('#sequence-note-insert-overlay');
+      if (oldOverlay) oldOverlay.remove();
+      var noteOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      noteOverlay.setAttribute('id', 'sequence-note-insert-overlay');
+      svgEl.appendChild(noteOverlay);
+
       for (var j = 0; j < Math.min(noteGroups.length, noteStatements.length); j++) {
         (function (noteGroup, noteInfo) {
           noteGroup.style.cursor = 'pointer';
@@ -5737,8 +5780,105 @@
               ctx.openSequenceNoteEdit(noteInfo.statementIndex, noteInfo.statement.text || '', e.clientX, e.clientY);
             }
           });
+
+          // hover → + 버튼 표시
+          var btns = null;
+          var hideTimer = null;
+
+          function cancelHide() {
+            if (hideTimer !== null) { clearTimeout(hideTimer); hideTimer = null; }
+          }
+
+          function scheduleHide() {
+            cancelHide();
+            hideTimer = setTimeout(function () {
+              if (btns) {
+                for (var k = 0; k < btns.length; k++) btns[k].remove();
+                btns = null;
+              }
+              if (svgEl.dataset) delete svgEl.dataset.noteHoverActive;
+              hideTimer = null;
+            }, 120);
+          }
+
+          noteGroup.addEventListener('mouseenter', function () {
+            cancelHide();
+            if (svgEl.dataset) svgEl.dataset.noteHoverActive = '1';
+            if (btns) return;
+            var bbox;
+            try { bbox = noteGroup.getBBox(); } catch (e) { return; }
+            var participantId = noteInfo.statement.participants && noteInfo.statement.participants[0];
+            btns = SequenceSvgHandler._createNoteInsertButtons(
+              noteOverlay, bbox, noteInfo.statementIndex, participantId, ctx, cancelHide, scheduleHide
+            );
+          });
+          noteGroup.addEventListener('mouseleave', scheduleHide);
         })(noteGroups[j], noteStatements[j]);
       }
+    },
+
+    _createNoteInsertButtons: function (overlay, bbox, statementIndex, participantId, ctx, onEnter, onLeave) {
+      var elements = [];
+      var cx = bbox.x + bbox.width / 2 + 28;
+      var positions = [
+        { y: bbox.y - 12, isBefore: true },
+        { y: bbox.y + bbox.height + 12, isBefore: false }
+      ];
+
+      for (var i = 0; i < positions.length; i++) {
+        (function (pos) {
+          var hit = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          hit.setAttribute('cx', cx);
+          hit.setAttribute('cy', pos.y);
+          hit.setAttribute('r', '14');
+          hit.setAttribute('fill', '#000');
+          hit.setAttribute('fill-opacity', '0.001');
+          hit.style.pointerEvents = 'all';
+          hit.style.cursor = 'pointer';
+          overlay.appendChild(hit);
+          elements.push(hit);
+
+          var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          circle.setAttribute('cx', cx);
+          circle.setAttribute('cy', pos.y);
+          circle.setAttribute('r', '10');
+          circle.setAttribute('fill', '#388e3c');
+          circle.setAttribute('stroke', '#fff');
+          circle.setAttribute('stroke-width', '2');
+          circle.style.pointerEvents = 'none';
+          overlay.appendChild(circle);
+          elements.push(circle);
+
+          var plus = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          plus.setAttribute('x', cx);
+          plus.setAttribute('y', pos.y + 1);
+          plus.setAttribute('text-anchor', 'middle');
+          plus.setAttribute('dominant-baseline', 'middle');
+          plus.setAttribute('fill', '#fff');
+          plus.setAttribute('font-size', '16');
+          plus.setAttribute('font-weight', '700');
+          plus.style.pointerEvents = 'none';
+          plus.textContent = '+';
+          overlay.appendChild(plus);
+          elements.push(plus);
+
+          hit.addEventListener('click', function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+            ctx.insertSequenceNoteAt(statementIndex, participantId, pos.isBefore);
+          });
+          hit.addEventListener('mouseenter', function () {
+            onEnter();
+            circle.setAttribute('fill', '#43a047');
+          });
+          hit.addEventListener('mouseleave', function () {
+            circle.setAttribute('fill', '#388e3c');
+            onLeave();
+          });
+        })(positions[i]);
+      }
+
+      return elements;
     },
 
     // solid(단일 dash) ↔ dotted(이중 dash) 토글
@@ -6021,6 +6161,11 @@
       addSequenceNote: function (data) {
         if (this.isFlowchart || !data || !data.participantId) return;
         this._applySequenceEdit(sequenceModelEditing.addNote(this.model, data));
+      },
+
+      insertSequenceNoteAt: function (data) {
+        if (this.isFlowchart || !data || !data.participantId) return;
+        this._applySequenceEdit(sequenceModelEditing.insertNoteAtStatementIndex(this.model, data));
       },
 
       updateSequenceNoteText: function (data) {
@@ -8677,6 +8822,7 @@ Vue.component('mermaid-full-editor', {
           @update-sequence-branch-text="updateSequenceBranchText"\
           @change-sequence-block-type="changeSequenceBlockType"\
           @create-sequence-note="addSequenceNote"\
+          @insert-sequence-note-at="insertSequenceNoteAt"\
           @update-sequence-note-text="updateSequenceNoteText"\
           @toggle-participant-kind="toggleParticipantKind"\
           @move-sequence-participant="moveSequenceParticipant"\

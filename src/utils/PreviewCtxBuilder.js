@@ -86,6 +86,20 @@
           if (el) { el.focus(); el.select(); }
         });
       },
+      insertSequenceNoteAt: function (statementIndex, participantId, isBefore) {
+        var pid = participantId;
+        if (!pid) {
+          var ps = vm.model.participants || [];
+          if (!ps.length) return;
+          pid = ps[0].id;
+        }
+        vm.$emit('insert-sequence-note-at', {
+          statementIndex: statementIndex,
+          participantId: pid,
+          isBefore: isBefore !== false
+        });
+      },
+
       openSequenceNoteEdit: function (statementIndex, text, clientX, clientY) {
         vm.sequenceToolbar = null;
         vm.editingSequenceNoteStatementIndex = statementIndex;

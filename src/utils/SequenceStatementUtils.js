@@ -375,6 +375,16 @@
     return statements;
   }
 
+  function insertNoteAtStatementIndex(model, statementIndex, participantId, text) {
+    var statements = cloneStatements(model);
+    var note = { type: 'note', participants: [participantId], text: text || 'Note' };
+    var idx = (statementIndex !== null && statementIndex !== undefined)
+      ? Math.max(0, Math.min(statementIndex, statements.length))
+      : statements.length;
+    statements.splice(idx, 0, note);
+    return statements;
+  }
+
   global.SequenceStatementUtils = {
     cloneStatements: cloneStatements,
     listBlocks: listBlocks,
@@ -391,7 +401,8 @@
     changeBlockKind: changeBlockKind,
     addNoteStatement: addNoteStatement,
     updateNoteText: updateNoteText,
-    deleteNoteStatement: deleteNoteStatement
+    deleteNoteStatement: deleteNoteStatement,
+    insertNoteAtStatementIndex: insertNoteAtStatementIndex
   };
 
 })(typeof window !== 'undefined' ? window : this);

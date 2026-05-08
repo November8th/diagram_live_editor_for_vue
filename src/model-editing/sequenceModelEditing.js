@@ -255,6 +255,16 @@
       });
     },
 
+    insertNoteAtStatementIndex: function (model, data) {
+      if (!model || !data || !data.participantId || data.statementIndex === undefined) return model;
+      var insertAt = data.isBefore !== false ? data.statementIndex : data.statementIndex + 1;
+      return finish(model, {
+        statements: SequenceStatementUtils.insertNoteAtStatementIndex(
+          model, insertAt, data.participantId, data.text || 'Note'
+        )
+      });
+    },
+
     updateNoteText: function (model, data) {
       if (!model || !data || data.statementIndex === null || data.statementIndex === undefined) return model;
       var nextText = String(data.text || '').trim();

@@ -253,6 +253,7 @@ Vue.component('mermaid-full-editor', {
           @update-sequence-branch-text="updateSequenceBranchText"\
           @change-sequence-block-type="changeSequenceBlockType"\
           @create-sequence-note="addSequenceNote"\
+          @insert-sequence-note-at="insertSequenceNoteAt"\
           @update-sequence-note-text="updateSequenceNoteText"\
           @toggle-participant-kind="toggleParticipantKind"\
           @move-sequence-participant="moveSequenceParticipant"\

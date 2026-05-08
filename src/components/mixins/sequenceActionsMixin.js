@@ -122,6 +122,11 @@
         this._applySequenceEdit(sequenceModelEditing.addNote(this.model, data));
       },
 
+      insertSequenceNoteAt: function (data) {
+        if (this.isFlowchart || !data || !data.participantId) return;
+        this._applySequenceEdit(sequenceModelEditing.insertNoteAtStatementIndex(this.model, data));
+      },
+
       updateSequenceNoteText: function (data) {
         if (this.isFlowchart || !data || data.statementIndex === null || data.statementIndex === undefined) return;
         this._applySequenceEdit(sequenceModelEditing.updateNoteText(this.model, data));

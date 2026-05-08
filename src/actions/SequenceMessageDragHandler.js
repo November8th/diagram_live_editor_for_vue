@@ -92,6 +92,7 @@
 
       zone.addEventListener('mouseenter', function () {
         if (self._dragging) return;
+        if (svgEl.dataset && svgEl.dataset.noteHoverActive) return;
         self.clearHandles();
         for (var i = 0; i < slots.length; i++) {
           self._addHandle(svgEl, participant, slots[i], participantMap, ctx);
