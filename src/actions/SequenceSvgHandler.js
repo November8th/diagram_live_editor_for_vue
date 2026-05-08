@@ -18,7 +18,7 @@
       SequenceMessageDragHandler.initOverlay(svgEl);
       SequenceMessageDragHandler.attach(svgEl, participantMap, insertSlots, ctx);
       SequenceSvgHandler._attachParticipants(participantTargets, svgEl, ctx);
-      SequenceSvgHandler._attachMessages(messages, svgEl, ctx);
+      SequenceSvgHandler._attachMessages(messages, svgEl, model, participantMap, ctx);
       SequenceSvgHandler._attachNotes(svgEl, model, ctx, participantMap);
     },
 
@@ -61,13 +61,36 @@
       ctx.watchSequenceParticipantSelection(data.id, el);
     },
 
-    _attachMessages: function (messages, svgEl, ctx) {
+    _attachMessages: function (messages, svgEl, model, participantMap, ctx) {
+      var oldOverlay = svgEl.querySelector('#sequence-message-insert-overlay');
+      if (oldOverlay) oldOverlay.remove();
+      var msgOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      msgOverlay.setAttribute('id', 'sequence-message-insert-overlay');
+      svgEl.appendChild(msgOverlay);
+
+      var shared = { btns: null, hideTimer: null };
+
+      function sharedCancelHide() {
+        if (shared.hideTimer !== null) { clearTimeout(shared.hideTimer); shared.hideTimer = null; }
+      }
+      function sharedHideNow() {
+        sharedCancelHide();
+        if (shared.btns) {
+          for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
+          shared.btns = null;
+        }
+      }
+      function sharedScheduleHide() {
+        sharedCancelHide();
+        shared.hideTimer = setTimeout(function () { sharedHideNow(); }, 150);
+      }
+
       for (var i = 0; i < messages.length; i++) {
-        SequenceSvgHandler._attachMessage(messages[i], svgEl, ctx);
+        SequenceSvgHandler._attachMessage(messages[i], svgEl, model, participantMap, msgOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide, ctx);
       }
     },
 
-    _attachMessage: function (data, svgEl, ctx) {
+    _attachMessage: function (data, svgEl, model, participantMap, msgOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide, ctx) {
       if (!data.lineEl && !data.textEl) return;
       var hitEl = SequenceSvgHandler._makeMessageHit(svgEl, data);
       var visualEl = data.lineEl || data.textEl;
@@ -106,13 +129,38 @@
       hitEl.addEventListener('dblclick', onEdit);
       if (textEl && textEl !== hitEl) textEl.addEventListener('dblclick', onEdit);
 
+      // message statement index 계산 (위/아래 버튼의 stmtInsertAt에 사용)
+      var msgStmtIndex = (function () {
+        var stmts = (model && model.statements) || [];
+        var count = 0;
+        for (var si = 0; si < stmts.length; si++) {
+          if (stmts[si] && stmts[si].type === 'message') {
+            if (count === data.index) return si;
+            count++;
+          }
+        }
+        return stmts.length;
+      }());
+
+      var modelMsg = model && model.messages && model.messages[data.index];
+      var msgFromId = modelMsg ? modelMsg.from : null;
+
       hitEl.addEventListener('mouseenter', function () {
         if (visualEl) visualEl.classList.add('sequence-message-hovered');
         if (textEl) textEl.classList.add('sequence-message-text-hovered');
+        if (!data.bbox) return;
+        sharedHideNow();
+        var cx = data.bbox.x + data.bbox.width / 2 - 24;
+        shared.btns = SequenceSvgHandler._createNoteInsertButtons(
+          msgOverlay, data.bbox, msgStmtIndex, msgFromId,
+          svgEl, model, participantMap, ctx,
+          sharedCancelHide, sharedScheduleHide, cx
+        );
       });
       hitEl.addEventListener('mouseleave', function () {
         if (visualEl) visualEl.classList.remove('sequence-message-hovered');
         if (textEl) textEl.classList.remove('sequence-message-text-hovered');
+        sharedScheduleHide();
       });
 
       ctx.watchSequenceMessageSelection(data.index, visualEl, textEl);
@@ -326,9 +374,9 @@
       }
     },
 
-    _createNoteInsertButtons: function (overlay, bbox, statementIndex, participantId, svgEl, model, participantMap, ctx, onEnter, onLeave) {
+    _createNoteInsertButtons: function (overlay, bbox, statementIndex, participantId, svgEl, model, participantMap, ctx, onEnter, onLeave, cxOverride) {
       var elements = [];
-      var cx = bbox.x + bbox.width / 2 + 28;
+      var cx = (cxOverride !== undefined && cxOverride !== null) ? cxOverride : (bbox.x + bbox.width / 2 + 28);
       var positions = [
         { y: bbox.y - 12, isBefore: true },
         { y: bbox.y + bbox.height + 12, isBefore: false }
