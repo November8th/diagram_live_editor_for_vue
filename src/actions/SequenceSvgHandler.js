@@ -17,9 +17,9 @@
       var insertSlots = SequencePositionTracker.collectInsertSlots(participantMap, messages, notes, model);
 
       SequenceMessageDragHandler.initOverlay(svgEl);
-      SequenceMessageDragHandler.attach(svgEl, participantMap, insertSlots, ctx);
+      // SequenceMessageDragHandler.attach(svgEl, participantMap, insertSlots, ctx);
       SequenceSvgHandler._attachParticipants(participantTargets, svgEl, ctx);
-      SequenceSvgHandler._attachMessages(messages, svgEl, ctx);
+      SequenceSvgHandler._attachMessages(messages, svgEl, model, participantMap, ctx);
       SequenceSvgHandler._attachNotes(svgEl, model, ctx, participantMap);
     },
 
@@ -62,13 +62,36 @@
       ctx.watchSequenceParticipantSelection(data.id, el);
     },
 
-    _attachMessages: function (messages, svgEl, ctx) {
+    _attachMessages: function (messages, svgEl, model, participantMap, ctx) {
+      var oldOverlay = svgEl.querySelector('#sequence-message-insert-overlay');
+      if (oldOverlay) oldOverlay.remove();
+      var msgOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      msgOverlay.setAttribute('id', 'sequence-message-insert-overlay');
+      svgEl.appendChild(msgOverlay);
+
+      var shared = { btns: null, hideTimer: null };
+
+      function sharedCancelHide() {
+        if (shared.hideTimer !== null) { clearTimeout(shared.hideTimer); shared.hideTimer = null; }
+      }
+      function sharedHideNow() {
+        sharedCancelHide();
+        if (shared.btns) {
+          for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
+          shared.btns = null;
+        }
+      }
+      function sharedScheduleHide() {
+        sharedCancelHide();
+        shared.hideTimer = setTimeout(function () { sharedHideNow(); }, 150);
+      }
+
       for (var i = 0; i < messages.length; i++) {
-        SequenceSvgHandler._attachMessage(messages[i], svgEl, ctx);
+        SequenceSvgHandler._attachMessage(messages[i], svgEl, model, participantMap, msgOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide, ctx);
       }
     },
 
-    _attachMessage: function (data, svgEl, ctx) {
+    _attachMessage: function (data, svgEl, model, participantMap, msgOverlay, shared, sharedCancelHide, sharedHideNow, sharedScheduleHide, ctx) {
       if (!data.lineEl && !data.textEl) return;
       var hitEl = SequenceSvgHandler._makeMessageHit(svgEl, data);
       var visualEl = data.lineEl || data.textEl;
@@ -107,13 +130,41 @@
       hitEl.addEventListener('dblclick', onEdit);
       if (textEl && textEl !== hitEl) textEl.addEventListener('dblclick', onEdit);
 
+      var msgStmtIndex = (function () {
+        var stmts = (model && model.statements) || [];
+        var count = 0;
+        for (var si = 0; si < stmts.length; si++) {
+          if (stmts[si] && stmts[si].type === 'message') {
+            if (count === data.index) return si;
+            count++;
+          }
+        }
+        return stmts.length;
+      }());
+
+      var modelMsg = model && model.messages && model.messages[data.index];
+      var msgFromId = modelMsg ? modelMsg.from : null;
+
       hitEl.addEventListener('mouseenter', function () {
         if (visualEl) visualEl.classList.add('sequence-message-hovered');
         if (textEl) textEl.classList.add('sequence-message-text-hovered');
+        if (!data.bbox) return;
+        sharedHideNow();
+        var fromEntry = msgFromId && participantMap && participantMap[msgFromId];
+        var bboxCx = data.bbox.x + data.bbox.width / 2;
+        var cx = fromEntry
+          ? fromEntry.cx + (fromEntry.cx < bboxCx ? 28 : -28)
+          : (data.bbox.x + 20);
+        shared.btns = SequenceSvgHandler._createNoteInsertButtons(
+          msgOverlay, data.bbox, msgStmtIndex, msgFromId,
+          svgEl, model, participantMap, ctx,
+          sharedCancelHide, sharedScheduleHide, cx
+        );
       });
       hitEl.addEventListener('mouseleave', function () {
         if (visualEl) visualEl.classList.remove('sequence-message-hovered');
         if (textEl) textEl.classList.remove('sequence-message-text-hovered');
+        sharedScheduleHide();
       });
 
       ctx.watchSequenceMessageSelection(data.index, visualEl, textEl);
@@ -246,6 +297,30 @@
         if (g && seenGroups.indexOf(g) === -1) { seenGroups.push(g); noteGroups.push(g); }
       }
 
+      var oldOverlay = svgEl.querySelector('#sequence-note-insert-overlay');
+      if (oldOverlay) oldOverlay.remove();
+      var noteOverlay = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      noteOverlay.setAttribute('id', 'sequence-note-insert-overlay');
+      svgEl.appendChild(noteOverlay);
+
+      var shared = { btns: null, hideTimer: null };
+
+      function sharedCancelHide() {
+        if (shared.hideTimer !== null) { clearTimeout(shared.hideTimer); shared.hideTimer = null; }
+      }
+      function sharedHideNow() {
+        sharedCancelHide();
+        if (shared.btns) {
+          for (var k = 0; k < shared.btns.length; k++) shared.btns[k].remove();
+          shared.btns = null;
+        }
+        if (svgEl.dataset) delete svgEl.dataset.noteHoverActive;
+      }
+      function sharedScheduleHide() {
+        sharedCancelHide();
+        shared.hideTimer = setTimeout(function () { sharedHideNow(); }, 150);
+      }
+
       for (var j = 0; j < Math.min(noteGroups.length, noteStatements.length); j++) {
         (function (noteGroup, noteInfo) {
           noteGroup.style.cursor = 'pointer';
@@ -275,6 +350,19 @@
               ctx.openSequenceNoteEdit(noteInfo.statementIndex, noteInfo.statement.text || '', e.clientX, e.clientY);
             }
           });
+
+          noteGroup.addEventListener('mouseenter', function () {
+            sharedHideNow();
+            if (svgEl.dataset) svgEl.dataset.noteHoverActive = '1';
+            var bbox;
+            try { bbox = noteGroup.getBBox(); } catch (e) { return; }
+            var participantId = noteInfo.statement.participants && noteInfo.statement.participants[0];
+            shared.btns = SequenceSvgHandler._createNoteInsertButtons(
+              noteOverlay, bbox, noteInfo.statementIndex, participantId, svgEl, model, participantMap, ctx,
+              sharedCancelHide, sharedScheduleHide, bbox.x + bbox.width / 2
+            );
+          });
+          noteGroup.addEventListener('mouseleave', sharedScheduleHide);
 
           if (ctx.watchSequenceNoteMultiSelection) {
             ctx.watchSequenceNoteMultiSelection(noteInfo.statementIndex, noteGroup);
@@ -319,7 +407,7 @@
           hit.setAttribute('cx', cx); hit.setAttribute('cy', pos.y); hit.setAttribute('r', '14');
           hit.setAttribute('fill', '#000'); hit.setAttribute('fill-opacity', '0.001');
           hit.style.pointerEvents = 'all';
-          hit.style.cursor = hasDrag ? 'crosshair' : 'pointer';
+          hit.style.cursor = hasDrag ? 'ew-resize' : 'pointer';
           overlay.appendChild(hit); elements.push(hit);
 
           var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
