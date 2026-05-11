@@ -1,6 +1,6 @@
 /**
  * gui-editor.component.js
- * Built: 2026-05-11T01:59:39.473Z
+ * Built: 2026-05-11T02:21:32.780Z
  *
  * Concatenation of gui-editor source files (no minification).
  * Requires global Vue 2 and Mermaid loaded separately.
@@ -5581,12 +5581,30 @@
             try {
               var bbb = btelEl.getBBox();
               allBranchClickRanges.push(Object.assign({
+                el: btelEl,
                 yMin: bbb.y - 14,
                 yMax: bbb.y + Math.max(bbb.height, 16) + 14
               }, bInfo));
             } catch (eBBox) {}
           }
         }
+      }
+
+      // 안전 필터: block header의 labelText와 같은 부모 g를 공유하는 loopText는
+      // block main title이므로 branch separator 목록에서 제거한다.
+      // (_findMatchingLoopText가 잘못 소비했거나 pass 2가 잘못 가져간 경우 방어)
+      var labelParentEls = [];
+      for (var lpi = 0; lpi < labelTextEls.length; lpi++) {
+        var lpEl = labelTextEls[lpi];
+        if (lpEl && lpEl.parentNode) labelParentEls.push(lpEl.parentNode);
+      }
+      if (labelParentEls.length) {
+        branchElRefs = branchElRefs.filter(function (ref) {
+          return !ref.el.parentNode || labelParentEls.indexOf(ref.el.parentNode) === -1;
+        });
+        allBranchClickRanges = allBranchClickRanges.filter(function (range) {
+          return !range.el || !range.el.parentNode || labelParentEls.indexOf(range.el.parentNode) === -1;
+        });
       }
 
       // 각 블록에 이벤트 부착 (block-level 처리 순서는 statementIndex 기준)
@@ -5752,41 +5770,44 @@
     },
 
     _findMatchingLoopText: function (labelEl, allLoopTextEls, usedLoopIndices) {
-      if (!labelEl || !labelEl.getBBox) return this._findNextUnusedLoopText(allLoopTextEls, usedLoopIndices);
+      if (!labelEl) return null;
 
-      var labelBox;
-      try {
-        labelBox = labelEl.getBBox();
-      } catch (e) {
-        return this._findNextUnusedLoopText(allLoopTextEls, usedLoopIndices);
+      // 전략1: labelEl과 동일한 부모 g를 공유하는 loopText → Mermaid SVG에서
+      // block header의 labelText와 loopText(조건 텍스트)는 항상 같은 g 안에 있다.
+      var labelParent = labelEl.parentNode;
+      if (labelParent) {
+        for (var i = 0; i < allLoopTextEls.length; i++) {
+          if (usedLoopIndices[i]) continue;
+          if (allLoopTextEls[i] && allLoopTextEls[i].parentNode === labelParent) {
+            usedLoopIndices[i] = true;
+            return allLoopTextEls[i];
+          }
+        }
       }
+
+      // 전략2: Y 근접 fallback (임계값 40 이내만 허용)
+      // else/and separator loopText가 다음 block header보다 Y가 근접할 수 있으므로
+      // _findNextUnusedLoopText 호출(무조건 소비)은 하지 않는다.
+      if (!labelEl.getBBox) return null;
+      var labelBox;
+      try { labelBox = labelEl.getBBox(); } catch (e) { return null; }
 
       var bestEl = null;
       var bestIdx = -1;
-      var bestDist = Infinity;
+      var bestDist = 40; // SVG 단위 최대 허용 거리
 
-      for (var i = 0; i < allLoopTextEls.length; i++) {
-        if (usedLoopIndices[i]) continue;
-        var loopEl = allLoopTextEls[i];
+      for (var j = 0; j < allLoopTextEls.length; j++) {
+        if (usedLoopIndices[j]) continue;
+        var loopEl = allLoopTextEls[j];
         if (!loopEl || !loopEl.getBBox) continue;
-
         var loopBox;
-        try {
-          loopBox = loopEl.getBBox();
-        } catch (e2) {
-          continue;
-        }
-
+        try { loopBox = loopEl.getBBox(); } catch (e2) { continue; }
         var dist = Math.abs(loopBox.y - labelBox.y);
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestEl = loopEl;
-          bestIdx = i;
-        }
+        if (dist < bestDist) { bestDist = dist; bestEl = loopEl; bestIdx = j; }
       }
 
-      if (bestIdx !== -1) usedLoopIndices[bestIdx] = true;
-      return bestEl;
+      if (bestIdx !== -1) { usedLoopIndices[bestIdx] = true; return bestEl; }
+      return null;
     },
 
     _findNextUnusedLoopText: function (allLoopTextEls, usedLoopIndices) {
