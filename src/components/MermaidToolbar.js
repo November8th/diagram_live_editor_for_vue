@@ -19,7 +19,8 @@ Vue.component('mermaid-toolbar', {
     canUndo: { type: Boolean, default: false },
     canRedo: { type: Boolean, default: false },
     autonumber: { type: Boolean, default: false },
-    fullScreen: { type: Boolean, default: false }
+    fullScreen: { type: Boolean, default: false },
+    directionLocked: { type: Boolean, default: false }
   },
   data: function () {
     return {
@@ -146,7 +147,7 @@ Vue.component('mermaid-toolbar', {
           <button class="toolbar__btn" @click="redo" :disabled="!canRedo" title="Redo (Ctrl+Y)">Redo</button>\
         </div>\
         <div v-if="isFlowchart" class="toolbar__group">\
-          <select class="toolbar__select" :value="direction" @change="changeDirection" title="Layout direction">\
+          <select class="toolbar__select" :value="direction" @change="changeDirection" :disabled="directionLocked" :title="directionLocked ? \'Direction change not supported for graph diagrams\' : \'Layout direction\'">\
             <option value="TD">Top Down</option>\
             <option value="LR">Left Right</option>\
             <option value="BT">Bottom Top</option>\

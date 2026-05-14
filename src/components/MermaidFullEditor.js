@@ -42,6 +42,9 @@ Vue.component('mermaid-full-editor', {
     canUndo:     function () { return !!(this.history && this.history.canUndo()); },
     canRedo:     function () { return !!(this.history && this.history.canRedo()); },
     isFlowchart: function () { return !!this.model && this.model.type !== 'sequenceDiagram'; },
+    directionLocked: function () {
+      return !!(this.model && this.model.headerKeyword === 'graph');
+    },
     toolbarDirection: function () {
       var dir = '';
       if (this.model && this.model.profile === 'static') {
@@ -212,6 +215,7 @@ Vue.component('mermaid-full-editor', {
         <mermaid-toolbar\
           :diagram-type="model.type"\
           :direction="toolbarDirection"\
+          :direction-locked="directionLocked"\
           :can-undo="canUndo"\
           :can-redo="canRedo"\
           :autonumber="!!model.autonumber"\

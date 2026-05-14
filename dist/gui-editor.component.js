@@ -1,6 +1,6 @@
 /**
  * gui-editor.component.js
- * Built: 2026-05-14T01:53:29.197Z
+ * Built: 2026-05-14T02:10:08.067Z
  *
  * Concatenation of gui-editor source files (no minification).
  * Requires global Vue 2 and Mermaid loaded separately.
@@ -2483,7 +2483,7 @@
         ? StaticFlowchartGenerator.generateSubgraphHeader(sg)
         : (sg.title && sg.title !== sg.id ? 'subgraph ' + sg.id + ' [' + sg.title + ']' : 'subgraph ' + sg.id);
       lines.push('    ' + header);
-      if (useStaticOutput && sg.direction && sg.direction !== model.direction) lines.push('        direction ' + sg.direction);
+      if (useStaticOutput && sg.direction && model.headerKeyword !== 'graph') lines.push('        direction ' + sg.direction);
 
       var wroteStatement = false;
       if (useStaticOutput) {
@@ -7646,7 +7646,8 @@ Vue.component('mermaid-toolbar', {
     canUndo: { type: Boolean, default: false },
     canRedo: { type: Boolean, default: false },
     autonumber: { type: Boolean, default: false },
-    fullScreen: { type: Boolean, default: false }
+    fullScreen: { type: Boolean, default: false },
+    directionLocked: { type: Boolean, default: false }
   },
   data: function () {
     return {
@@ -7773,7 +7774,7 @@ Vue.component('mermaid-toolbar', {
           <button class="toolbar__btn" @click="redo" :disabled="!canRedo" title="Redo (Ctrl+Y)">Redo</button>\
         </div>\
         <div v-if="isFlowchart" class="toolbar__group">\
-          <select class="toolbar__select" :value="direction" @change="changeDirection" title="Layout direction">\
+          <select class="toolbar__select" :value="direction" @change="changeDirection" :disabled="directionLocked" :title="directionLocked ? \'Direction change not supported for graph diagrams\' : \'Layout direction\'">\
             <option value="TD">Top Down</option>\
             <option value="LR">Left Right</option>\
             <option value="BT">Bottom Top</option>\
@@ -9806,6 +9807,9 @@ Vue.component('mermaid-full-editor', {
     canUndo:     function () { return !!(this.history && this.history.canUndo()); },
     canRedo:     function () { return !!(this.history && this.history.canRedo()); },
     isFlowchart: function () { return !!this.model && this.model.type !== 'sequenceDiagram'; },
+    directionLocked: function () {
+      return !!(this.model && this.model.headerKeyword === 'graph');
+    },
     toolbarDirection: function () {
       var dir = '';
       if (this.model && this.model.profile === 'static') {
@@ -9976,6 +9980,7 @@ Vue.component('mermaid-full-editor', {
         <mermaid-toolbar\
           :diagram-type="model.type"\
           :direction="toolbarDirection"\
+          :direction-locked="directionLocked"\
           :can-undo="canUndo"\
           :can-redo="canRedo"\
           :autonumber="!!model.autonumber"\

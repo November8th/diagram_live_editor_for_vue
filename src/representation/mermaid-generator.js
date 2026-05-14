@@ -197,7 +197,7 @@
         ? StaticFlowchartGenerator.generateSubgraphHeader(sg)
         : (sg.title && sg.title !== sg.id ? 'subgraph ' + sg.id + ' [' + sg.title + ']' : 'subgraph ' + sg.id);
       lines.push('    ' + header);
-      if (useStaticOutput && sg.direction && sg.direction !== model.direction) lines.push('        direction ' + sg.direction);
+      if (useStaticOutput && sg.direction && model.headerKeyword !== 'graph') lines.push('        direction ' + sg.direction);
 
       var wroteStatement = false;
       if (useStaticOutput) {
