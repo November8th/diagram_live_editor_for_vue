@@ -197,7 +197,10 @@
         ? StaticFlowchartGenerator.generateSubgraphHeader(sg)
         : (sg.title && sg.title !== sg.id ? 'subgraph ' + sg.id + ' [' + sg.title + ']' : 'subgraph ' + sg.id);
       lines.push('    ' + header);
-      if (useStaticOutput && sg.direction && model.headerKeyword !== 'graph') lines.push('        direction ' + sg.direction);
+      if (useStaticOutput && sg.direction) {
+        var sgDir = sg.direction.toUpperCase() === 'TD' ? 'TB' : sg.direction;
+        lines.push('        direction ' + sgDir);
+      }
 
       var wroteStatement = false;
       if (useStaticOutput) {

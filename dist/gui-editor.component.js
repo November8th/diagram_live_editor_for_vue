@@ -1,6 +1,6 @@
 /**
  * gui-editor.component.js
- * Built: 2026-05-14T02:10:08.067Z
+ * Built: 2026-05-14T02:23:02.464Z
  *
  * Concatenation of gui-editor source files (no minification).
  * Requires global Vue 2 and Mermaid loaded separately.
@@ -2483,7 +2483,10 @@
         ? StaticFlowchartGenerator.generateSubgraphHeader(sg)
         : (sg.title && sg.title !== sg.id ? 'subgraph ' + sg.id + ' [' + sg.title + ']' : 'subgraph ' + sg.id);
       lines.push('    ' + header);
-      if (useStaticOutput && sg.direction && model.headerKeyword !== 'graph') lines.push('        direction ' + sg.direction);
+      if (useStaticOutput && sg.direction) {
+        var sgDir = sg.direction.toUpperCase() === 'TD' ? 'TB' : sg.direction;
+        lines.push('        direction ' + sgDir);
+      }
 
       var wroteStatement = false;
       if (useStaticOutput) {
