@@ -1,6 +1,6 @@
 /**
  * gui-editor.component.js
- * Built: 2026-05-14T01:15:39.524Z
+ * Built: 2026-05-14T01:36:59.419Z
  *
  * Concatenation of gui-editor source files (no minification).
  * Requires global Vue 2 and Mermaid loaded separately.
@@ -2062,11 +2062,11 @@
         if (parsedHeader || headerMatch) {
           model.headerKeyword = parsedHeader ? parsedHeader.keyword : (/^graph\b/i.test(line) ? 'graph' : 'flowchart');
           model.direction = parsedHeader ? parsedHeader.direction : headerMatch[1].toUpperCase();
-          if (model.direction === 'TB') model.direction = 'TD';
           if (model.headerKeyword === 'graph' && StaticFlowchartParser) {
             StaticFlowchartParser.markStatic(model, 'graph-keyword');
             model.directives = pendingDirectives.slice();
           }
+          if (model.profile !== 'static' && model.direction === 'TB') model.direction = 'TD';
           started = true;
           continue;
         }
@@ -2811,7 +2811,26 @@
     },
 
     changeDirection: function (model, dir) {
-      if (!model || !dir || model.direction === dir) return model;
+      if (!model || !dir) return model;
+      if (model.profile === 'static') {
+        var subgraphs = model.subgraphs || [];
+        var subgraphChanged = false;
+        for (var i = 0; i < subgraphs.length; i++) {
+          if (subgraphs[i].direction !== dir) {
+            subgraphChanged = true;
+            break;
+          }
+        }
+        if (model.direction === dir && !subgraphChanged) return model;
+        var nextSubgraphs = subgraphs.map(function (sg) {
+          return Object.assign({}, sg, { direction: dir });
+        });
+        return Object.assign({}, model, {
+          direction: dir,
+          subgraphs: nextSubgraphs
+        });
+      }
+      if (model.direction === dir) return model;
       return Object.assign({}, model, { direction: dir });
     },
 
@@ -9786,7 +9805,16 @@ Vue.component('mermaid-full-editor', {
   computed: {
     canUndo:     function () { return !!(this.history && this.history.canUndo()); },
     canRedo:     function () { return !!(this.history && this.history.canRedo()); },
-    isFlowchart: function () { return !!this.model && this.model.type !== 'sequenceDiagram'; }
+    isFlowchart: function () { return !!this.model && this.model.type !== 'sequenceDiagram'; },
+    toolbarDirection: function () {
+      var dir = '';
+      if (this.model && this.model.profile === 'static') {
+        var subgraphs = this.model.subgraphs || [];
+        if (subgraphs.length && subgraphs[0].direction) dir = subgraphs[0].direction;
+      }
+      if (!dir) dir = this.model && this.model.direction ? this.model.direction : 'TD';
+      return dir === 'TB' ? 'TD' : dir;
+    }
   },
 
   watch: {
@@ -9947,7 +9975,7 @@ Vue.component('mermaid-full-editor', {
       <div class="gui-editor-shell__preview-pane">\
         <mermaid-toolbar\
           :diagram-type="model.type"\
-          :direction="model.direction"\
+          :direction="toolbarDirection"\
           :can-undo="canUndo"\
           :can-redo="canRedo"\
           :autonumber="!!model.autonumber"\

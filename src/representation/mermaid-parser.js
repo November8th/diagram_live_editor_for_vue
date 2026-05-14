@@ -437,11 +437,11 @@
         if (parsedHeader || headerMatch) {
           model.headerKeyword = parsedHeader ? parsedHeader.keyword : (/^graph\b/i.test(line) ? 'graph' : 'flowchart');
           model.direction = parsedHeader ? parsedHeader.direction : headerMatch[1].toUpperCase();
-          if (model.direction === 'TB') model.direction = 'TD';
           if (model.headerKeyword === 'graph' && StaticFlowchartParser) {
             StaticFlowchartParser.markStatic(model, 'graph-keyword');
             model.directives = pendingDirectives.slice();
           }
+          if (model.profile !== 'static' && model.direction === 'TB') model.direction = 'TD';
           started = true;
           continue;
         }

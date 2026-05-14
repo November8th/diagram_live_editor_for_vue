@@ -154,7 +154,26 @@
     },
 
     changeDirection: function (model, dir) {
-      if (!model || !dir || model.direction === dir) return model;
+      if (!model || !dir) return model;
+      if (model.profile === 'static') {
+        var subgraphs = model.subgraphs || [];
+        var subgraphChanged = false;
+        for (var i = 0; i < subgraphs.length; i++) {
+          if (subgraphs[i].direction !== dir) {
+            subgraphChanged = true;
+            break;
+          }
+        }
+        if (model.direction === dir && !subgraphChanged) return model;
+        var nextSubgraphs = subgraphs.map(function (sg) {
+          return Object.assign({}, sg, { direction: dir });
+        });
+        return Object.assign({}, model, {
+          direction: dir,
+          subgraphs: nextSubgraphs
+        });
+      }
+      if (model.direction === dir) return model;
       return Object.assign({}, model, { direction: dir });
     },
 

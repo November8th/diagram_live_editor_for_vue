@@ -40,6 +40,15 @@ Vue.component('mermaid-live-editor', {
     canRedo: function () { return !!(this.history && this.history.canRedo()); },
     isFlowchart: function () {
       return !!this.model && this.model.type !== 'sequenceDiagram';
+    },
+    toolbarDirection: function () {
+      var dir = '';
+      if (this.model && this.model.profile === 'static') {
+        var subgraphs = this.model.subgraphs || [];
+        if (subgraphs.length && subgraphs[0].direction) dir = subgraphs[0].direction;
+      }
+      if (!dir) dir = this.model && this.model.direction ? this.model.direction : 'TD';
+      return dir === 'TB' ? 'TD' : dir;
     }
   },
 
@@ -283,7 +292,7 @@ Vue.component('mermaid-live-editor', {
           <!-- 상단 toolbar는 preview 네비게이션과 편집 액션을 묶는다. -->\
           <mermaid-toolbar\
             :diagram-type="model.type"\
-            :direction="model.direction"\
+            :direction="toolbarDirection"\
             :can-undo="canUndo"\
             :can-redo="canRedo"\
             :autonumber="!!model.autonumber"\
